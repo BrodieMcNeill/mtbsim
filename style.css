@@ -1,9 +1,22 @@
 body {
   margin: 0;
   overflow: hidden;
-  background: linear-gradient(to top, #4facfe, #00f2fe);
+  background: #4fa0ff;
+  font-family: Arial, sans-serif;
 }
 
 canvas {
   display: block;
+}
+
+.controls {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 2;
 }
