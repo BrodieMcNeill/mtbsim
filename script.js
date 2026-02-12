@@ -1,8 +1,13 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
 const bikeImg = new Image();
 bikeImg.src = "bike.png";
@@ -10,19 +15,25 @@ bikeImg.src = "bike.png";
 let lastTime = 0;
 let cameraX = 0;
 let score = 0;
-let combo = 0;
-let comboTimer = 0;
-let flipCount = 0;
+let coinsCollected = 0;
 let crashed = false;
 let timer = 0;
+let nextMilestone = 500;
 
-let keys = {};
-let particles = [];
+const keys = {};
+const particles = [];
 
-document.addEventListener("keydown", (e) => keys[e.key] = true);
-document.addEventListener("keyup", (e) => keys[e.key] = false);
+document.addEventListener("keydown", (e) => {
+  keys[e.key] = true;
 
-let bike = {
+  if (e.key.toLowerCase() === "r") resetGame();
+});
+
+document.addEventListener("keyup", (e) => {
+  keys[e.key] = false;
+});
+
+const bike = {
   x: 200,
   y: 0,
   wheelBase: 140,
@@ -33,36 +44,73 @@ let bike = {
   rotationSpeed: 0,
   groundedFront: false,
   groundedRear: false,
-  suspension: 0
+  suspension: 0,
+  completedFlips: 0,
+  currentFlipDirection: 0,
+  currentAirRotation: 0
 };
 
-// Boost pad positions
-let boosts = [1500, 3000, 4500];
+const boosts = [1500, 3200, 5600, 8200];
+const hazards = [2400, 4100, 6900, 9100];
+const coins = Array.from({ length: 30 }, (_, i) => ({
+  x: 650 + i * 420,
+  yOffset: (i % 3) * 70 + 90,
+  collected: false
+}));
 
-function getGroundHeight(x) {
-  // Downhill with bumps
-  return canvas.height - 300 +
-    x * 0.05 +
-    Math.sin(x * 0.002) * 150 +
-    Math.sin(x * 0.01) * 40;
+function resetBike() {
+  bike.x = 200;
+  bike.y = 0;
+  bike.speed = 0;
+  bike.velocityY = 0;
+  bike.rotation = 0;
+  bike.rotationSpeed = 0;
+  bike.groundedFront = false;
+  bike.groundedRear = false;
+  bike.suspension = 0;
+  bike.completedFlips = 0;
+  bike.currentFlipDirection = 0;
+  bike.currentAirRotation = 0;
 }
 
-function createParticles(x, y, amount) {
+function resetGame() {
+  resetBike();
+  score = 0;
+  coinsCollected = 0;
+  crashed = false;
+  timer = 0;
+  cameraX = 0;
+  nextMilestone = 500;
+  particles.length = 0;
+  coins.forEach((coin) => {
+    coin.collected = false;
+  });
+}
+
+function getGroundHeight(x) {
+  return canvas.height - 320 +
+    x * 0.05 +
+    Math.sin(x * 0.002) * 140 +
+    Math.sin(x * 0.01) * 45;
+}
+
+function createParticles(x, y, amount, color = "#6b4f2a") {
   for (let i = 0; i < amount; i++) {
     particles.push({
       x,
       y,
       size: Math.random() * 5 + 2,
       speedX: (Math.random() - 0.5) * 300,
-      speedY: Math.random() * -400,
-      life: 1
+      speedY: Math.random() * -420,
+      life: 1,
+      color
     });
   }
 }
 
 function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
-    let p = particles[i];
+    const p = particles[i];
     p.x += p.speedX * dt;
     p.y += p.speedY * dt;
     p.speedY += 1000 * dt;
@@ -72,40 +120,63 @@ function updateParticles(dt) {
 }
 
 function drawParticles() {
-  ctx.fillStyle = "#6b4f2a";
-  particles.forEach(p => {
+  particles.forEach((p) => {
+    ctx.globalAlpha = Math.max(p.life, 0.1);
+    ctx.fillStyle = p.color;
     ctx.beginPath();
     ctx.arc(p.x - cameraX, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
   });
+  ctx.globalAlpha = 1;
+}
+
+function updateAirFlips() {
+  if (bike.groundedRear && bike.groundedFront) {
+    bike.currentFlipDirection = 0;
+    bike.currentAirRotation = 0;
+    return;
+  }
+
+  if (bike.rotationSpeed === 0) return;
+
+  const direction = Math.sign(bike.rotationSpeed);
+
+  if (bike.currentFlipDirection === 0 || direction !== bike.currentFlipDirection) {
+    bike.currentFlipDirection = direction;
+    bike.currentAirRotation = 0;
+  }
+
+  bike.currentAirRotation += Math.abs(bike.rotationSpeed);
+
+  while (bike.currentAirRotation >= Math.PI * 2) {
+    bike.currentAirRotation -= Math.PI * 2;
+    bike.completedFlips += 1;
+    score += 150;
+    createParticles(bike.x, bike.y, 10, "#f5b700");
+  }
 }
 
 function update(dt) {
   if (crashed) return;
 
-  // Timer
   timer += dt;
 
-  // Horizontal movement
   if (keys["ArrowRight"]) bike.speed += 2500 * dt;
   else if (keys["ArrowLeft"]) bike.speed -= 2500 * dt;
-  else bike.speed *= 0.98;
+  else bike.speed *= 0.985;
 
-  bike.speed = Math.max(-800, Math.min(800, bike.speed));
+  bike.speed = Math.max(-850, Math.min(900, bike.speed));
   bike.x += bike.speed * dt;
 
-  // Jump
   if (keys["ArrowUp"] && bike.groundedRear && bike.groundedFront) {
-    bike.velocityY = -1000;
+    bike.velocityY = -1100;
     bike.groundedRear = false;
     bike.groundedFront = false;
   }
 
-  // Gravity
-  bike.velocityY += 2000 * dt;
+  bike.velocityY += 2100 * dt;
   bike.y += bike.velocityY * dt;
 
-  // Air rotation
   if (!bike.groundedRear || !bike.groundedFront) {
     if (keys["ArrowRight"]) bike.rotationSpeed += 6 * dt;
     if (keys["ArrowLeft"]) bike.rotationSpeed -= 6 * dt;
@@ -113,81 +184,96 @@ function update(dt) {
     bike.rotationSpeed *= 0.7;
   }
 
+  bike.rotationSpeed = Math.max(-0.22, Math.min(0.22, bike.rotationSpeed));
   bike.rotation += bike.rotationSpeed;
 
-  // Flip detection
-  if (!bike.groundedRear && !bike.groundedFront) {
-    if (Math.abs(bike.rotation) > Math.PI * 2) {
-      flipCount++;
-      bike.rotation = bike.rotation % (Math.PI * 2);
-    }
-  }
+  updateAirFlips();
 
-  // Wheel positions
-  let rearWheel = {
+  const rearWheel = {
     x: bike.x,
     y: bike.y + bike.wheelRadius
   };
-  let frontWheel = {
+  const frontWheel = {
     x: bike.x + Math.cos(bike.rotation) * bike.wheelBase,
     y: bike.y + Math.sin(bike.rotation) * bike.wheelBase + bike.wheelRadius
   };
 
-  // Ground heights
-  let rearGround = getGroundHeight(rearWheel.x);
-  let frontGround = getGroundHeight(frontWheel.x);
+  const rearGround = getGroundHeight(rearWheel.x);
+  const frontGround = getGroundHeight(frontWheel.x);
 
-  // Rear wheel collision
   if (rearWheel.y >= rearGround) {
     if (!bike.groundedRear) {
       createParticles(rearWheel.x, rearGround, 20);
-
-      // Crash if upside down
-      if (Math.abs(bike.rotation % (Math.PI * 2)) > Math.PI / 2) crashed = true;
-      else {
-        score += flipCount * 100;
-        flipCount = 0;
+      if (Math.abs((bike.rotation % (Math.PI * 2))) > Math.PI * 0.62) {
+        crashed = true;
+        createParticles(bike.x, bike.y, 60, "#ff4d4d");
+      } else {
+        score += bike.completedFlips * 120;
+        bike.completedFlips = 0;
       }
-
       bike.suspension = 25;
     }
     bike.y = rearGround - bike.wheelRadius;
     bike.velocityY = 0;
     bike.groundedRear = true;
-  } else bike.groundedRear = false;
+  } else {
+    bike.groundedRear = false;
+  }
 
-  // Front wheel collision
-  if (frontWheel.y >= frontGround) {
-    bike.groundedFront = true;
-  } else bike.groundedFront = false;
+  bike.groundedFront = frontWheel.y >= frontGround;
 
-  // Suspension bounce
   bike.suspension *= 0.8;
 
-  // Boost pads
-  boosts.forEach(boostX => {
-    if (Math.abs(bike.x - boostX) < 50) {
-      bike.speed += 2000;
-      createParticles(bike.x, bike.y, 30);
+  boosts.forEach((boostX) => {
+    if (Math.abs(bike.x - boostX) < 45) {
+      bike.speed += 1800;
+      score += 2;
+      createParticles(bike.x, bike.y, 20, "#59d9ff");
     }
   });
 
-  // Combo system
-  if (comboTimer > 0) comboTimer -= dt;
-  else if (combo > 0) {
-    score += combo * 200;
-    combo = 0;
+  hazards.forEach((hazardX) => {
+    const hazardY = getGroundHeight(hazardX);
+    if (Math.abs(bike.x - hazardX) < 50 && bike.y + bike.wheelRadius > hazardY - 30) {
+      crashed = true;
+      createParticles(bike.x, bike.y, 70, "#ff4d4d");
+    }
+  });
+
+  coins.forEach((coin) => {
+    if (coin.collected) return;
+
+    const coinY = getGroundHeight(coin.x) - coin.yOffset;
+    const dx = bike.x - coin.x;
+    const dy = bike.y - coinY;
+    if (dx * dx + dy * dy < 3600) {
+      coin.collected = true;
+      coinsCollected += 1;
+      score += 75;
+      createParticles(coin.x, coinY, 16, "#ffd75f");
+    }
+  });
+
+  if (bike.x > nextMilestone) {
+    score += 50;
+    nextMilestone += 500;
   }
 
-  // Dirt while riding
-  if ((bike.groundedRear || bike.groundedFront) && Math.abs(bike.speed) > 100) {
+  if ((bike.groundedRear || bike.groundedFront) && Math.abs(bike.speed) > 130) {
     createParticles(bike.x + 50, bike.y + bike.wheelRadius, 2);
   }
 
   updateParticles(dt);
 
-  // Camera follow
   cameraX += ((bike.x - canvas.width / 2) - cameraX) * 0.08;
+}
+
+function drawSky() {
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, "#4fa0ff");
+  gradient.addColorStop(1, "#b7e27c");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 function drawGround() {
@@ -200,10 +286,36 @@ function drawGround() {
   ctx.lineTo(canvas.width, canvas.height);
   ctx.fill();
 
-  // Draw boost pads
-  boosts.forEach(b => {
-    ctx.fillStyle = "yellow";
+  boosts.forEach((b) => {
+    ctx.fillStyle = "#f7ff4a";
     ctx.fillRect(b - cameraX - 25, getGroundHeight(b) - 10, 50, 10);
+  });
+
+  hazards.forEach((h) => {
+    const y = getGroundHeight(h);
+    ctx.fillStyle = "#8b2c2c";
+    ctx.beginPath();
+    ctx.moveTo(h - cameraX - 25, y);
+    ctx.lineTo(h - cameraX, y - 35);
+    ctx.lineTo(h - cameraX + 25, y);
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+function drawCoins() {
+  coins.forEach((coin) => {
+    if (coin.collected) return;
+
+    const coinY = getGroundHeight(coin.x) - coin.yOffset;
+    ctx.fillStyle = "#ffd75f";
+    ctx.beginPath();
+    ctx.arc(coin.x - cameraX, coinY, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#fff5bf";
+    ctx.lineWidth = 2;
+    ctx.stroke();
   });
 }
 
@@ -216,25 +328,36 @@ function drawBike() {
 }
 
 function drawUI() {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+  ctx.fillRect(16, 16, 320, 132);
+
   ctx.fillStyle = "white";
-  ctx.font = "30px Arial";
-  ctx.fillText("Score: " + score, 30, 50);
-  ctx.fillText("Time: " + timer.toFixed(2), 30, 80);
+  ctx.font = "24px Arial";
+  ctx.fillText(`Score: ${score}`, 30, 48);
+  ctx.fillText(`Coins: ${coinsCollected}/${coins.length}`, 30, 78);
+  ctx.fillText(`Distance: ${Math.max(0, Math.floor(bike.x / 10))}m`, 30, 108);
+  ctx.fillText(`Time: ${timer.toFixed(1)}s`, 30, 138);
+
   if (crashed) {
-    ctx.fillStyle = "red";
-    ctx.font = "60px Arial";
-    ctx.fillText("CRASHED!", canvas.width / 2 - 150, canvas.height / 2);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ff5959";
+    ctx.font = "64px Arial";
+    ctx.fillText("CRASHED!", canvas.width / 2 - 160, canvas.height / 2 - 30);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "32px Arial";
+    ctx.fillText("Press R to Restart", canvas.width / 2 - 145, canvas.height / 2 + 20);
   }
 }
 
 function gameLoop(timestamp) {
-  const dt = (timestamp - lastTime) / 1000;
+  const dt = Math.min(0.032, (timestamp - lastTime) / 1000 || 0);
   lastTime = timestamp;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+  drawSky();
   update(dt);
   drawGround();
+  drawCoins();
   drawParticles();
   drawBike();
   drawUI();
@@ -243,5 +366,6 @@ function gameLoop(timestamp) {
 }
 
 bikeImg.onload = () => {
+  resetGame();
   requestAnimationFrame(gameLoop);
 };
